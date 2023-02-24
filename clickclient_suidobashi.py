@@ -6,10 +6,13 @@ import os
 from PySide2.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QHBoxLayout, QGraphicsScene, QGraphicsView, QWidget, QLabel, QTextEdit, QTextBrowser, QLineEdit, QSpacerItem, QSizePolicy, QMessageBox, QSlider, QGridLayout)
 from PySide2.QtCore import Qt
 from PySide2.QtGui import QPixmap, QImage, QPainter, QBrush, QFont
+
 import WebSocketCapf as cwebsock
 import json
+from datetime import datetime
 
-TX = TY = 0.0
+myID = 'OP002SA'
+targetID = 'CA003'
 
 class MapView(QGraphicsView):
     def __init__(self, parent=None):
@@ -30,13 +33,13 @@ class MapView(QGraphicsView):
         self.sendInputCB = func
 
     def mousePressEvent(self, event):
-        global TX, TY
         qp = self.mapToScene(event.x(), event.y())
-        TX, TY = qp.x(), qp.y()
-        print(TX,TY)
+        tx, ty = qp.x(), qp.y()
+        print(tx, ty)
+        self.setMarkerPoint(tx, ty)
         if not self.sendInputCB is None:
-            self.sendInputCB(TX, TY)
-            self.setMarkerPoint(TX, TY)
+            self.sendInputCB(tx, ty)
+
 
     ### マーカーを描画
     def setMarkerPoint(self, x, y):
@@ -50,7 +53,7 @@ class MapView(QGraphicsView):
     def repaint(self):
         if self.backgroundImage :
             tmpimg = QImage(self.backgroundImage)
-            painter = QPainter() #tmpimg)
+            painter = QPainter()    # マーカをアイコンに（fontawesome）
             painter.begin(tmpimg)
             painter.setPen(Qt.red)
             brush = QBrush(Qt.red, bs=Qt.SolidPattern)
@@ -61,7 +64,6 @@ class MapView(QGraphicsView):
             painter = None
             pixmap = QPixmap.fromImage(tmpimg)
             tmpimg = None
-            pixmap = QPixmap.fromImage(self.backgroundImage)
             self.scene.clear()
             self.scene.addPixmap(pixmap)
             self.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -126,6 +128,7 @@ class UIView(QGraphicsView):
         layout.addWidget(self.log_box, 1, 2, 2, 3)
         self.setLayout(layout)
 
+
     ### スライダの情報を取得しサーバへ送信
     def setSendSliderCB(self, func):
         self.sendSliderCB = func
@@ -141,31 +144,30 @@ class UIView(QGraphicsView):
             print("[Send params]   cylinder_pos: " + str(z))
 
 
+
 class mainView(QMainWindow) :
     def __init__(self) :
         super().__init__()
         self.setWindowTitle("水道橋Map")
-        self.resize(1260, 640)
+        self.resize(1580, 580)
 
         self.loginurl = 'https://ignis2.ca-platform.org/api/login'
         self.websockurl = 'wss://ignis2-websocket.ca-platform.org'
-        self.accountid = 'CA003'
-        self.accountpswd = 'CA003'
-        self.capfWebSocket = cwebsock.WebSocketCapf(
-            self.loginurl, self.accountid, self.accountpswd, self.websockurl)
-        self.capfWebSocket.setMessageCallback(self.recvWebMessageCB)    # サーバ(CA)からROSの情報を取得
-        if not self.capfWebSocket.connect():
-            QMessageBox.information(
-                None, "Error", "WebSocket Connect Error : " + self.websockurl, QMessageBox.Ok)
-            self.close()
-            sys.exit()
+        self.accountid = myID
+        self.accountpswd = myID
+        self.capfWebSocket = cwebsock.WebSocketCapf(self.loginurl, self.accountid, self.accountpswd, self.websockurl)
 
         self.mapImage = MapView()
         self.mapImage.setSendInputCB(self.sendInput)
-        self.mapImage.setMarkerPoint(TX, TY)
 
         self.uiImage = UIView()
         self.uiImage.setSendSliderCB(self.sendSlider)
+
+        dummy_l = 0.0
+        for _ in range(10):
+            dummy_l = _
+            self.sendBlank(dummy_l)    ## 何かを送りつけるテスト
+            print("generate L" + str(dummy_l))
 
         # サイズポリシーを取得 （サイズ比を Map:UI=2:1 に）
         self.sizePolicy_map = self.mapImage.sizePolicy()
@@ -186,11 +188,35 @@ class mainView(QMainWindow) :
         self.setCentralWidget(mainWidget)
         self.show()
 
-    ## サーバ(CA)からROSの情報を取得
-    def recvWebMessageCB(self, message) :
+
+        self.capfWebSocket.setMessageCallback(self.recvWebMessageCB)    # サーバ(CA)からROSの情報を取得
+        if not self.capfWebSocket.connect():
+            QMessageBox.information(
+                None, "Error", "WebSocket Connect Error : " + self.websockurl, QMessageBox.Ok)
+            self.close()
+            sys.exit()
+
+
+    # サーバ(CA)からROSの情報を取得
+    def recvWebMessageCB(self, message):
         jsoncmd = json.loads(message)
+
         if 'mpos_x' in jsoncmd.keys():
-            print("jsoncmd['mpos_x']")
+            print("[ROS][WAYPOINTS] x:   " + str(jsoncmd['mpos_x']))
+            print("[ROS][WAYPOINTS] y:   " + str(jsoncmd['mpos_y']))
+            print("[ROS][WAYPOINTS] yaw: " + str(jsoncmd['mori_z']))
+            print("[ROS][WAYPOINTS] q:   " + str(jsoncmd['mori_w']))
+
+        if 'voltage' in jsoncmd.keys():
+            dt = datetime.now().time()
+            tv = jsoncmd['voltage']
+            tx = jsoncmd['pos_x']
+            ty = jsoncmd['pos_y']
+            tz = jsoncmd['ori_z']
+            log_info = ("[ROS][INFO]\n[" + str(dt) + "]\n" + str(tv) + ",\n" + str(tx) + ",\n" + str(ty) + ",\n" + str(jsoncmd['pos_z']) + ",\n" + str(tz) + ",\n" + str(jsoncmd['ori_w']))
+            self.uiImage.log_box.setText(log_info)   # UIに表示
+            # self.mapImage.setMarkerPoint(tx,ty)      # 地図に自己位置を表示
+            # self.mapImage.repaint()
 
 
     def setImage(self, img) :
@@ -200,16 +226,23 @@ class mainView(QMainWindow) :
     def sendInput(self, x, y) :
         jsonparam = {'x' : x, 'y' : y}
         jsoncmd = {'cmd' : 'position', 'param' : json.dumps(jsonparam)}
-        jsonmsg = {'targets' : 'OP002SA', 'message' : json.dumps(jsoncmd)}
-        # jsonmsg = {'targets' : 'CA001', 'message' : json.dumps(jsoncmd)}
+        jsonmsg = {'targets' : targetID, 'message' : json.dumps(jsoncmd)}
         self.capfWebSocket.send(json.dumps(jsonmsg))
 
     def sendSlider(self, z) :
         jsonparam = {'z' : z}
         jsoncmd = {'cmd' : 'position', 'param' : json.dumps(jsonparam)}
-        jsonmsg = {'targets' : 'OP002SA', 'message' : json.dumps(jsoncmd)}
-        # jsonmsg = {'targets' : 'CA001', 'message' : json.dumps(jsoncmd)}
+        jsonmsg = {'targets' : targetID, 'message' : json.dumps(jsoncmd)}
         self.capfWebSocket.send(json.dumps(jsonmsg))
+
+    def sendBlank(self, l) :
+        self.blank = l
+        jsonparam = {'blank' : self.blank}
+        jsoncmd = {'dummy' : 'other', 'param' : json.dumps(jsonparam)}
+        jsonmsg = {'targets' : targetID, 'message' : json.dumps(jsoncmd)}
+        self.capfWebSocket.send(json.dumps(jsonmsg))
+        print("send L")
+
 
 if __name__ == '__main__' :
     app = QApplication(sys.argv)

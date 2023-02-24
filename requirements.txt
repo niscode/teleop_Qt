@@ -1,3 +1,4 @@
 PySide2
+simplejson
 requests
 websocket-client
