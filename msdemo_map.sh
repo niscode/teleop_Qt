@@ -1,2 +1,2 @@
 #!/bin/sh
-python3 ~/scripts/suidobashi_map.py
+python3 ~/teleop_Qt/suidobashi_map.py
